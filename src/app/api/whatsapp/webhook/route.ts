@@ -623,6 +623,7 @@ async function processMessage(
     userId,
     contactId: contactRecord.id,
     conversationId: conversation.id,
+    contactPhone: senderPhone,
     message:
       interactiveReplyId
         ? {

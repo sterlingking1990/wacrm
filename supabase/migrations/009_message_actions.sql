@@ -3,16 +3,16 @@
 --
 -- Adds two things the chat UI now needs:
 --
---   1. `messages.reply_to_message_id` — a self-FK so a message can
+--   1. `messages.reply_to_message_id` â€” a self-FK so a message can
 --      point at the message it replies to. We use the internal UUID
 --      (not Meta's message_id text), because Meta IDs aren't unique
 --      across phone numbers and can't be FK-constrained. The webhook
 --      resolves `context.id` from Meta into our internal UUID before
---      writing. ON DELETE SET NULL — a deleted parent must not nuke
+--      writing. ON DELETE SET NULL â€” a deleted parent must not nuke
 --      its replies (which today never happens, but the constraint
 --      should match intent).
 --
---   2. `message_reactions` table — one row per (message, actor).
+--   2. `message_reactions` table â€” one row per (message, actor).
 --      Reactions arrive concurrently from agents (UI) and customers
 --      (webhook). A row-level uniqueness constraint enforces "one
 --      reaction per actor per message" without read-modify-write
@@ -21,7 +21,7 @@
 --      `conversation_id` is denormalised purely so Supabase Realtime
 --      can filter on it with a plain `eq`. Realtime can't join.
 --
--- Idempotent — safe to run multiple times.
+-- Idempotent â€” safe to run multiple times.
 -- ============================================================
 
 -- ============================================================
@@ -31,7 +31,7 @@ ALTER TABLE messages
   ADD COLUMN IF NOT EXISTS reply_to_message_id UUID
   REFERENCES messages(id) ON DELETE SET NULL;
 
--- Partial index — most messages aren't replies, so skip nulls.
+-- Partial index â€” most messages aren't replies, so skip nulls.
 CREATE INDEX IF NOT EXISTS idx_messages_reply_to
   ON messages(reply_to_message_id)
   WHERE reply_to_message_id IS NOT NULL;
@@ -40,7 +40,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_reply_to
 -- 2. message_reactions
 -- ============================================================
 CREATE TABLE IF NOT EXISTS message_reactions (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   message_id UUID NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
   conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   actor_type TEXT NOT NULL CHECK (actor_type IN ('customer', 'agent')),
@@ -102,7 +102,7 @@ CREATE POLICY "Users update their own agent reactions" ON message_reactions FOR 
     )
   );
 
--- Realtime — let the thread subscribe filtered by conversation_id.
+-- Realtime â€” let the thread subscribe filtered by conversation_id.
 DO $$
 BEGIN
   IF NOT EXISTS (

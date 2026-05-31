@@ -40,6 +40,8 @@ import {
   Inbox,
   GitFork,
   Tag,
+  Globe,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -87,6 +89,7 @@ type NodeType =
   | "condition"
   | "set_tag"
   | "handoff"
+  | "http_fetch"
   | "end";
 
 interface BuilderNode {
@@ -98,7 +101,7 @@ interface BuilderNode {
 interface BuilderState {
   name: string;
   description: string;
-  trigger_type: "keyword" | "first_inbound_message" | "manual";
+  trigger_type: "keyword" | "first_inbound_message" | "manual" | "api_trigger";
   trigger_config: Record<string, unknown>;
   entry_node_id: string | null;
   status: FlowRow["status"];
@@ -149,6 +152,11 @@ const NODE_META: Record<
     label: "Handoff to agent",
     icon: UserPlus,
     color: "text-amber-400",
+  },
+  http_fetch: {
+    label: "API / HTTP fetch",
+    icon: Globe,
+    color: "text-orange-400",
   },
   end: { label: "End", icon: Flag, color: "text-slate-400" },
 };
@@ -274,6 +282,11 @@ function summarizeNode(node: BuilderNode): string | null {
       const note = typeof cfg.note === "string" ? cfg.note : "";
       return note.length > 0 ? truncate(note) : null;
     }
+    case "http_fetch": {
+      const url = typeof cfg.url === "string" ? cfg.url : "";
+      const method = typeof cfg.method === "string" ? cfg.method : "POST";
+      return url.length > 0 ? `${method} ${truncate(url, 65)}` : null;
+    }
   }
 }
 
@@ -320,6 +333,16 @@ function defaultConfigFor(type: NodeType): Record<string, unknown> {
       return { mode: "add", tag_id: "", next_node_key: "" };
     case "handoff":
       return { note: "" };
+    case "http_fetch":
+      return {
+        url: "",
+        method: "POST",
+        body_template: "",
+        headers: {},
+        capture: [],
+        next_node_key: "",
+        error_node_key: "",
+      };
     case "end":
       return {};
   }
@@ -983,44 +1006,54 @@ function NodeCard({
           "ring-2 ring-primary ring-offset-2 ring-offset-slate-950",
       )}
     >
-      <button
-        type="button"
-        onClick={onToggle}
-        className="flex w-full items-center gap-3 px-4 py-3 text-left"
-      >
-        <meta.icon className={cn("h-4 w-4 shrink-0", meta.color)} />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-medium text-white">
-              {meta.label}
-            </span>
-            <code className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">
-              {node.node_key}
-            </code>
-            {isEntry && (
-              <Badge
-                variant="outline"
-                className="border-primary/40 bg-primary/10 text-[10px] text-primary"
-              >
-                Entry
-              </Badge>
+      <div className="flex items-center">
+        <button
+          type="button"
+          onClick={onToggle}
+          className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left"
+        >
+          <meta.icon className={cn("h-4 w-4 shrink-0", meta.color)} />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className="truncate text-sm font-medium text-white">
+                {meta.label}
+              </span>
+              <code className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">
+                {node.node_key}
+              </code>
+              {isEntry && (
+                <Badge
+                  variant="outline"
+                  className="border-primary/40 bg-primary/10 text-[10px] text-primary"
+                >
+                  Entry
+                </Badge>
+              )}
+            </div>
+            {!expanded && preview && (
+              <p className="mt-0.5 truncate text-xs text-slate-500">
+                {preview}
+              </p>
             )}
           </div>
-          {!expanded && preview && (
-            <p className="mt-0.5 truncate text-xs text-slate-500">
-              {preview}
-            </p>
+          {hasError && (
+            <CircleAlert className="h-3.5 w-3.5 shrink-0 text-red-400" />
           )}
-        </div>
-        {hasError && (
-          <CircleAlert className="h-3.5 w-3.5 shrink-0 text-red-400" />
-        )}
-        {expanded ? (
-          <ChevronUp className="h-4 w-4 text-slate-500" />
-        ) : (
-          <ChevronDown className="h-4 w-4 text-slate-500" />
-        )}
-      </button>
+          {expanded ? (
+            <ChevronUp className="h-4 w-4 text-slate-500" />
+          ) : (
+            <ChevronDown className="h-4 w-4 text-slate-500" />
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={onRemove}
+          className="mr-3 shrink-0 rounded p-1 text-slate-600 hover:bg-red-500/10 hover:text-red-400"
+          aria-label="Remove node"
+        >
+          <Trash2 className="h-4 w-4" />
+        </button>
+      </div>
       {expanded && (
         <div className="border-t border-slate-800 px-4 py-4">
           <NodeConfigForm
@@ -1029,24 +1062,13 @@ function NodeCard({
             onUpdate={onUpdate}
             onUpdateConfig={onUpdateConfig}
           />
-          <div className="mt-4 flex items-center justify-between border-t border-slate-800 pt-3">
-            <div className="flex items-center gap-2">
-              {!isEntry && (
-                <Button variant="ghost" size="sm" onClick={onSetEntry}>
-                  Set as entry
-                </Button>
-              )}
+          {!isEntry && (
+            <div className="mt-4 border-t border-slate-800 pt-3">
+              <Button variant="ghost" size="sm" onClick={onSetEntry}>
+                Set as entry
+              </Button>
             </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onRemove}
-              className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              Remove node
-            </Button>
-          </div>
+          )}
           {issues.length > 0 && (
             <div className="mt-3 flex flex-col gap-1 rounded-md bg-red-500/5 p-2">
               {issues.map((i, ix) => (
@@ -1199,6 +1221,15 @@ function NodeConfigForm({
           value={(cfg as { note?: string }).note ?? ""}
           onChange={(v) => onUpdateConfig({ note: v })}
           rows={2}
+        />
+      )}
+
+      {node.node_type === "http_fetch" && (
+        <HttpFetchForm
+          cfg={cfg as HttpFetchCfg}
+          allNodes={allNodes}
+          currentKey={node.node_key}
+          onUpdateConfig={onUpdateConfig}
         />
       )}
 
@@ -1996,6 +2027,263 @@ function NodeKeySelect({
   );
 }
 
+// ---- http_fetch form ----
+
+interface HttpFetchCfg {
+  url?: string;
+  method?: "GET" | "POST";
+  body_template?: string;
+  headers?: Record<string, string>;
+  capture?: Array<{ response_path: string; var_key: string }>;
+  next_node_key?: string;
+  error_node_key?: string;
+}
+
+function HttpFetchForm({
+  cfg,
+  allNodes,
+  currentKey,
+  onUpdateConfig,
+}: {
+  cfg: HttpFetchCfg;
+  allNodes: BuilderNode[];
+  currentKey: string;
+  onUpdateConfig: (patch: Record<string, unknown>) => void;
+}) {
+  const headers = cfg.headers ?? {};
+  const headerEntries = Object.entries(headers);
+  const capture = cfg.capture ?? [];
+
+  function setHeader(oldKey: string, newKey: string, value: string) {
+    const updated: Record<string, string> = {};
+    for (const [k, v] of Object.entries(headers)) {
+      updated[k === oldKey ? newKey : k] = v;
+    }
+    if (newKey && !updated[newKey]) updated[newKey] = value;
+    onUpdateConfig({ headers: updated });
+  }
+
+  function removeHeader(key: string) {
+    const updated = { ...headers };
+    delete updated[key];
+    onUpdateConfig({ headers: updated });
+  }
+
+  function addHeader() {
+    onUpdateConfig({ headers: { ...headers, "": "" } });
+  }
+
+  function updateCapture(
+    idx: number,
+    field: "response_path" | "var_key",
+    val: string,
+  ) {
+    const updated = capture.map((c, i) =>
+      i === idx ? { ...c, [field]: val } : c,
+    );
+    onUpdateConfig({ capture: updated });
+  }
+
+  function removeCapture(idx: number) {
+    onUpdateConfig({ capture: capture.filter((_, i) => i !== idx) });
+  }
+
+  function addCapture() {
+    onUpdateConfig({
+      capture: [...capture, { response_path: "", var_key: "" }],
+    });
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      {/* URL + method */}
+      <div className="flex gap-2">
+        <div className="w-24 shrink-0">
+          <label className="mb-1 block text-xs text-slate-400">Method</label>
+          <Select
+            value={cfg.method ?? "POST"}
+            onValueChange={(v) => onUpdateConfig({ method: v })}
+          >
+            <SelectTrigger className="bg-slate-800 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="POST">POST</SelectItem>
+              <SelectItem value="GET">GET</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="min-w-0 flex-1">
+          <label className="mb-1 block text-xs text-slate-400">URL</label>
+          <Input
+            value={cfg.url ?? ""}
+            onChange={(e) => onUpdateConfig({ url: e.target.value })}
+            placeholder="https://api.example.com/endpoint"
+            className="bg-slate-800 font-mono text-xs"
+          />
+        </div>
+      </div>
+
+      {/* Body template (POST only) */}
+      {(cfg.method ?? "POST") === "POST" && (
+        <div>
+          <label className="mb-1 block text-xs text-slate-400">
+            Request body (JSON){" "}
+            <span className="text-slate-500">
+              — use{" "}
+              <code className="rounded bg-slate-800 px-1">
+                {"{{vars.key}}"}
+              </code>{" "}
+              to interpolate flow variables
+            </span>
+          </label>
+          <Textarea
+            value={cfg.body_template ?? ""}
+            onChange={(e) => onUpdateConfig({ body_template: e.target.value })}
+            placeholder={'{"phone": "{{vars._customer_phone}}", "campaign_id": "{{vars.campaign_id}}"}'}
+            className="bg-slate-800 font-mono text-xs"
+            rows={4}
+          />
+        </div>
+      )}
+
+      {/* Headers */}
+      <div>
+        <div className="mb-1 flex items-center justify-between">
+          <label className="text-xs text-slate-400">
+            Request headers{" "}
+            <span className="text-slate-500">
+              — use{" "}
+              <code className="rounded bg-slate-800 px-1">
+                {"{{env.VAR_NAME}}"}
+              </code>{" "}
+              for secrets
+            </span>
+          </label>
+          <button
+            type="button"
+            onClick={addHeader}
+            className="text-xs text-slate-400 hover:text-slate-200"
+          >
+            + Add
+          </button>
+        </div>
+        {headerEntries.length === 0 && (
+          <p className="text-[10px] text-slate-600">
+            No headers yet.{" "}
+            <span className="italic">
+              Authorization: Bearer {"{{env.MY_API_KEY}}"}
+            </span>
+          </p>
+        )}
+        <div className="flex flex-col gap-1.5">
+          {headerEntries.map(([k, v], idx) => (
+            <div key={idx} className="flex items-center gap-1.5">
+              <Input
+                value={k}
+                onChange={(e) => setHeader(k, e.target.value, v)}
+                placeholder="Header name"
+                className="h-7 bg-slate-800 font-mono text-xs"
+              />
+              <Input
+                value={v}
+                onChange={(e) => setHeader(k, k, e.target.value)}
+                placeholder="Value / {{env.SECRET}}"
+                className="h-7 bg-slate-800 font-mono text-xs"
+              />
+              <button
+                type="button"
+                onClick={() => removeHeader(k)}
+                className="shrink-0 text-slate-500 hover:text-red-400"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Capture mappings */}
+      <div>
+        <div className="mb-1 flex items-center justify-between">
+          <label className="text-xs text-slate-400">
+            Capture response fields into vars
+          </label>
+          <button
+            type="button"
+            onClick={addCapture}
+            className="text-xs text-slate-400 hover:text-slate-200"
+          >
+            + Add
+          </button>
+        </div>
+        {capture.length === 0 && (
+          <p className="text-[10px] text-slate-600">
+            No captures yet. Each row maps a JSON path (e.g.{" "}
+            <code>data.token</code>) to a var key.
+          </p>
+        )}
+        {capture.length > 0 && (
+          <div className="mb-1 grid grid-cols-[1fr_1fr_auto] gap-1.5">
+            <span className="text-[10px] text-slate-500">Response path</span>
+            <span className="text-[10px] text-slate-500">→ var key</span>
+            <span />
+          </div>
+        )}
+        <div className="flex flex-col gap-1.5">
+          {capture.map((cap, idx) => (
+            <div key={idx} className="grid grid-cols-[1fr_1fr_auto] items-center gap-1.5">
+              <Input
+                value={cap.response_path}
+                onChange={(e) =>
+                  updateCapture(idx, "response_path", e.target.value)
+                }
+                placeholder="data.status"
+                className="h-7 bg-slate-800 font-mono text-xs"
+              />
+              <Input
+                value={cap.var_key}
+                onChange={(e) =>
+                  updateCapture(
+                    idx,
+                    "var_key",
+                    e.target.value.replace(/[^a-zA-Z0-9_]/g, ""),
+                  )
+                }
+                placeholder="activation_status"
+                className="h-7 bg-slate-800 font-mono text-xs"
+              />
+              <button
+                type="button"
+                onClick={() => removeCapture(idx)}
+                className="shrink-0 text-slate-500 hover:text-red-400"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Next / error nodes */}
+      <NextNodeRow
+        value={cfg.next_node_key ?? ""}
+        allNodes={allNodes}
+        currentKey={currentKey}
+        onChange={(v) => onUpdateConfig({ next_node_key: v })}
+        label="On success, advance to"
+      />
+      <NextNodeRow
+        value={cfg.error_node_key ?? ""}
+        allNodes={allNodes}
+        currentKey={currentKey}
+        onChange={(v) => onUpdateConfig({ error_node_key: v })}
+        label="On error, advance to (optional — omit to fail the run)"
+      />
+    </div>
+  );
+}
+
 // ============================================================
 // Add-node menu
 // ============================================================
@@ -2010,6 +2298,7 @@ function AddNodeButton({ onAdd }: { onAdd: (type: NodeType) => void }) {
     "condition",
     "set_tag",
     "handoff",
+    "http_fetch",
     "end",
   ];
   return (

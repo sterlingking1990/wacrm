@@ -3,15 +3,15 @@
 --
 -- What this migration adds:
 --
---   1. `flows` — the definition envelope (name, trigger config,
+--   1. `flows` â€” the definition envelope (name, trigger config,
 --      entry node, fallback policy, status). One row per authored bot.
 --
---   2. `flow_nodes` — the graph rows. Edges live INSIDE each node's
+--   2. `flow_nodes` â€” the graph rows. Edges live INSIDE each node's
 --      `config` JSONB (e.g. each button row carries its own
 --      `next_node_key`). Why edges-in-config rather than a separate
 --      `flow_edges` table:
 --        - The runner only ever asks "given current node X, where does
---          reply Y go?" — that's a single-row lookup with the JSON
+--          reply Y go?" â€” that's a single-row lookup with the JSON
 --          already on the row. Splitting edges out forces a join per
 --          inbound message.
 --        - The builder's natural unit of edit is the node ("change this
@@ -28,14 +28,14 @@
 --      The (flow_id, node_key) UNIQUE constraint guarantees lookup
 --      determinism.
 --
---   3. `flow_runs` — per-contact runtime state machine. The linchpin
+--   3. `flow_runs` â€” per-contact runtime state machine. The linchpin
 --      is the partial unique index `idx_one_active_run_per_contact`:
 --      at most one ACTIVE run per (user_id, contact_id). Two concurrent
 --      webhook deliveries trying to start a run both attempt INSERT;
 --      the second fails with 23505 and the runner catches & exits.
 --      No locking required.
 --
---   4. `flow_run_events` — append-only audit. Used by the runner for
+--   4. `flow_run_events` â€” append-only audit. Used by the runner for
 --      idempotency (refuses to advance twice on the same Meta
 --      message_id) and by the future run-history viewer.
 --
@@ -45,11 +45,11 @@
 --      instead of getting silently coerced into the "Unsupported
 --      message type" fallback in parseMessageContent.
 --
--- Idempotent — safe to run multiple times.
+-- Idempotent â€” safe to run multiple times.
 -- ============================================================
 
 -- ============================================================
--- 1. Messages table — widen content_type, add interactive_reply_id
+-- 1. Messages table â€” widen content_type, add interactive_reply_id
 -- ============================================================
 
 -- Drop & re-add the CHECK constraint to add 'interactive' as an allowed
@@ -66,7 +66,7 @@ ALTER TABLE messages
   ));
 
 -- Reply id of the button / list row the customer tapped. NULL for
--- everything that isn't an interactive reply. No FK — Meta button ids
+-- everything that isn't an interactive reply. No FK â€” Meta button ids
 -- are arbitrary user-chosen strings, not row references.
 ALTER TABLE messages
   ADD COLUMN IF NOT EXISTS interactive_reply_id TEXT;
@@ -75,7 +75,7 @@ ALTER TABLE messages
 -- 2. flows
 -- ============================================================
 CREATE TABLE IF NOT EXISTS flows (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   description TEXT,
@@ -112,7 +112,7 @@ CREATE POLICY "Users can manage own flows" ON flows FOR ALL
 -- 3. flow_nodes
 -- ============================================================
 CREATE TABLE IF NOT EXISTS flow_nodes (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   flow_id UUID NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
   node_key TEXT NOT NULL,
   node_type TEXT NOT NULL CHECK (node_type IN (
@@ -154,7 +154,7 @@ CREATE POLICY "Users manage nodes on their flows" ON flow_nodes FOR ALL
 -- 4. flow_runs
 -- ============================================================
 CREATE TABLE IF NOT EXISTS flow_runs (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   flow_id UUID NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   -- contact_id intentionally SET NULL on delete (matches the
@@ -214,7 +214,7 @@ CREATE POLICY "Users see own flow runs" ON flow_runs FOR SELECT
 -- 5. flow_run_events
 -- ============================================================
 CREATE TABLE IF NOT EXISTS flow_run_events (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   flow_run_id UUID NOT NULL REFERENCES flow_runs(id) ON DELETE CASCADE,
   event_type TEXT NOT NULL CHECK (event_type IN (
     'started',
@@ -268,7 +268,7 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON flows
 -- ============================================================
 -- Add flow_runs so the inbox can render "this contact is in flow X at
 -- node Y" live as the runner advances. Other flow tables don't need
--- realtime — the builder reads on demand, the runner is server-side.
+-- realtime â€” the builder reads on demand, the runner is server-side.
 DO $$
 BEGIN
   IF NOT EXISTS (

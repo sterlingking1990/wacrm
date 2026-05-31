@@ -37,7 +37,7 @@ export interface ValidationIssue {
 
 interface FlowInput {
   name: string;
-  trigger_type: "keyword" | "first_inbound_message" | "manual";
+  trigger_type: "keyword" | "first_inbound_message" | "manual" | "api_trigger";
   trigger_config: Record<string, unknown>;
   entry_node_id: string | null;
 }
@@ -648,6 +648,51 @@ function validateNode(
       // beyond their existence.
       break;
 
+    case "http_fetch": {
+      const cfg = node.config as {
+        url?: string;
+        method?: string;
+        next_node_key?: string;
+        error_node_key?: string;
+      };
+      if (!cfg.url?.trim()) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "url",
+          message: "API fetch node needs a URL.",
+        });
+      }
+      if (!cfg.next_node_key) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "next_node_key",
+          message: "API fetch node must point to a next node (on success).",
+        });
+      } else if (!knownKeys.has(cfg.next_node_key)) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "next_node_key",
+          message: `API fetch points to non-existent node "${cfg.next_node_key}".`,
+        });
+      }
+      if (cfg.error_node_key && !knownKeys.has(cfg.error_node_key)) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "error_node_key",
+          message: `API fetch error path points to non-existent node "${cfg.error_node_key}".`,
+        });
+      }
+      break;
+    }
+
     default:
       issues.push({
         severity: "error",
@@ -723,6 +768,16 @@ function outgoingEdges(node: NodeInput): string[] {
           if (r.next_node_key) out.push(r.next_node_key);
         }
       }
+      return out;
+    }
+    case "http_fetch": {
+      const cfg = node.config as {
+        next_node_key?: string;
+        error_node_key?: string;
+      };
+      const out: string[] = [];
+      if (cfg.next_node_key) out.push(cfg.next_node_key);
+      if (cfg.error_node_key) out.push(cfg.error_node_key);
       return out;
     }
     case "handoff":

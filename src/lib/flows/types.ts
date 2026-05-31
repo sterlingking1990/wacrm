@@ -155,6 +155,33 @@ export type EndNodeConfig = Record<string, never>;
  * v1.5+ additions (collect_input, condition, set_tag, http_fetch) will
  * extend this union — out-of-scope for the v1 engine PR.
  */
+/**
+ * Makes an outbound HTTP request, captures fields from the JSON response
+ * into flow_runs.vars, then auto-advances to next_node_key.
+ *
+ * URL and body_template support {{vars.X}} interpolation.
+ * Headers support {{env.VAR_NAME}} interpolation (resolved server-side
+ * from process.env — safe for secrets that must not appear in DB).
+ */
+export interface HttpFetchNodeConfig {
+  url: string
+  method: 'GET' | 'POST'
+  /** JSON string sent as the request body. Supports {{vars.X}} slots. POST only. */
+  body_template?: string
+  /** Static or env-interpolated headers. Use {{env.MY_SECRET}} for secrets. */
+  headers?: Record<string, string>
+  /** Fields to extract from the JSON response into vars. Dot-notation paths supported. */
+  capture: Array<{
+    /** e.g. "activator_name", "campaign_ids", "result.dva_account" */
+    response_path: string
+    /** Key stored in flow_runs.vars */
+    var_key: string
+  }>
+  next_node_key: string
+  /** Advance here if the fetch fails or returns non-2xx. Ends the run if omitted. */
+  error_node_key?: string
+}
+
 export type FlowNodeConfig =
   | { node_type: "start"; config: StartNodeConfig }
   | { node_type: "send_message"; config: SendMessageNodeConfig }
@@ -163,6 +190,7 @@ export type FlowNodeConfig =
   | { node_type: "collect_input"; config: CollectInputNodeConfig }
   | { node_type: "condition"; config: ConditionNodeConfig }
   | { node_type: "set_tag"; config: SetTagNodeConfig }
+  | { node_type: "http_fetch"; config: HttpFetchNodeConfig }
   | { node_type: "handoff"; config: HandoffNodeConfig }
   | { node_type: "end"; config: EndNodeConfig };
 
@@ -184,10 +212,21 @@ export interface KeywordTriggerConfig {
 // the no-empty-object-type lint rule.
 export type FirstInboundTriggerConfig = Record<string, never>;
 
+/**
+ * Triggered by an external system via POST /api/flows/trigger.
+ * trigger_key is a stable slug set by the engineer in the flow builder
+ * (e.g. "activation_confirmed", "payment_received", "appointment_reminder").
+ * The caller passes initial vars which are seeded into flow_runs.vars.
+ */
+export interface ApiTriggerConfig {
+  trigger_key: string;
+}
+
 export type FlowTriggerConfig =
   | { trigger_type: "keyword"; config: KeywordTriggerConfig }
   | { trigger_type: "first_inbound_message"; config: FirstInboundTriggerConfig }
-  | { trigger_type: "manual"; config: Record<string, never> };
+  | { trigger_type: "manual"; config: Record<string, never> }
+  | { trigger_type: "api_trigger"; config: ApiTriggerConfig };
 
 // ============================================================
 // DB-row shapes (read by the engine via supabaseAdmin)
@@ -199,7 +238,7 @@ export interface FlowRow {
   name: string;
   description: string | null;
   status: "draft" | "active" | "archived";
-  trigger_type: "keyword" | "first_inbound_message" | "manual";
+  trigger_type: "keyword" | "first_inbound_message" | "manual" | "api_trigger";
   trigger_config: KeywordTriggerConfig | FirstInboundTriggerConfig | Record<string, unknown>;
   entry_node_id: string | null;
   fallback_policy: FlowFallbackPolicy;
@@ -296,6 +335,8 @@ export interface DispatchInboundInput {
   contactId: string;
   conversationId: string;
   message: ParsedInbound;
+  /** Customer's WhatsApp phone — seeded into vars._customer_phone at run start. */
+  contactPhone?: string;
 }
 
 export interface DispatchInboundResult {

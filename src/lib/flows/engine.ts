@@ -40,6 +40,7 @@ import {
 } from "./meta-send";
 import { decideFallback, resolveFallbackPolicy } from "./fallback";
 import {
+  type ApiTriggerConfig,
   type CollectInputNodeConfig,
   type ConditionNodeConfig,
   type DispatchInboundInput,
@@ -47,6 +48,7 @@ import {
   type FlowNodeRow,
   type FlowRow,
   type FlowRunRow,
+  type HttpFetchNodeConfig,
   type ParsedInbound,
   type SendButtonsNodeConfig,
   type SendListNodeConfig,
@@ -113,7 +115,8 @@ export function isAutoAdvancing(node_type: string): boolean {
     node_type === "start" ||
     node_type === "send_message" ||
     node_type === "condition" ||
-    node_type === "set_tag"
+    node_type === "set_tag" ||
+    node_type === "http_fetch"
   );
 }
 
@@ -509,8 +512,39 @@ function interpolateVars(template: string, vars: Record<string, unknown>): strin
   if (!template) return "";
   return template.replace(/\{\{vars\.([a-zA-Z0-9_]+)\}\}/g, (_, key) => {
     const v = vars[key];
-    return v === undefined || v === null ? "" : String(v);
+    if (v === undefined || v === null) return "";
+    if (typeof v === "object") return JSON.stringify(v);
+    return String(v);
   });
+}
+
+/** Resolve a dot-notation path into a JSON object. Supports array indices. */
+function resolvePath(obj: unknown, path: string): unknown {
+  return path.split(".").reduce<unknown>((acc, key) => {
+    if (acc === null || acc === undefined) return undefined;
+    if (Array.isArray(acc)) {
+      const idx = parseInt(key, 10);
+      return isNaN(idx) ? undefined : acc[idx];
+    }
+    return (acc as Record<string, unknown>)[key];
+  }, obj);
+}
+
+/**
+ * Resolve {{env.VAR_NAME}} placeholders in header values against
+ * process.env. Only applied to headers — body templates use vars only.
+ */
+function interpolateEnvHeaders(
+  headers: Record<string, string> | undefined,
+): Record<string, string> {
+  if (!headers) return {};
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(headers)) {
+    out[k] = v.replace(/\{\{env\.([A-Z0-9_]+)\}\}/g, (_, name) => {
+      return process.env[name] ?? "";
+    });
+  }
+  return out;
 }
 
 async function endRun(
@@ -721,6 +755,55 @@ async function advanceFromNodeKey(
         });
       }
       return { outcome: "advanced" };
+    }
+    if (node.node_type === "http_fetch") {
+      const cfg = node.config as unknown as HttpFetchNodeConfig;
+      try {
+        const url = interpolateVars(cfg.url, run.vars);
+        const resolvedHeaders: Record<string, string> = {
+          "Content-Type": "application/json",
+          ...interpolateEnvHeaders(cfg.headers),
+        };
+        const fetchOptions: RequestInit = { method: cfg.method, headers: resolvedHeaders };
+        if (cfg.method === "POST" && cfg.body_template) {
+          fetchOptions.body = interpolateVars(cfg.body_template, run.vars);
+        }
+        const res = await fetch(url, fetchOptions);
+        if (!res.ok) throw new Error(`HTTP ${res.status} from ${url}`);
+        const data: unknown = await res.json();
+
+        // Capture declared response fields into vars
+        const newVars = { ...run.vars };
+        for (const cap of cfg.capture) {
+          const value = resolvePath(data, cap.response_path);
+          if (value !== undefined) {
+            // Store objects/arrays as-is so downstream condition nodes can read them
+            newVars[cap.var_key] = value;
+          }
+        }
+        await db.from("flow_runs").update({ vars: newVars }).eq("id", run.id);
+        run.vars = newVars;
+
+        await logEvent(db, run.id, "node_entered", node.node_key, {
+          node_type: "http_fetch",
+          url,
+          status: res.status,
+          captured: cfg.capture.map((c) => c.var_key),
+        });
+        currentKey = cfg.next_node_key;
+        continue;
+      } catch (err) {
+        await logEvent(db, run.id, "error", node.node_key, {
+          reason: "http_fetch_failed",
+          detail: err instanceof Error ? err.message : String(err),
+        });
+        if (cfg.error_node_key) {
+          currentKey = cfg.error_node_key;
+          continue;
+        }
+        await endRun(db, run.id, "failed", "http_fetch_failed");
+        return { outcome: "completed" };
+      }
     }
     if (node.node_type === "handoff") {
       await executeHandoff(db, run, node);
@@ -1024,6 +1107,13 @@ async function startNewRun(
       conversation_id: input.conversationId,
       status: "active",
       current_node_key: flow.entry_node_id,
+      // Seed context vars available from the very first node.
+      // _trigger_text: the raw message that started the flow (e.g. "activator-08012345678")
+      // _customer_phone: the sender's WhatsApp number — useful for purchase flows
+      vars: {
+        _trigger_text: input.message.kind === "text" ? input.message.text : "",
+        _customer_phone: input.contactPhone ?? "",
+      },
     })
     .select("*")
     .maybeSingle();
@@ -1065,4 +1155,134 @@ async function startNewRun(
     flow_run_id: run.id,
     outcome: outcome.outcome === "advanced" ? "started" : outcome.outcome,
   };
+}
+
+// ============================================================
+// Outbound trigger — start a flow from an external event
+// without any inbound message from the customer.
+// ============================================================
+
+export interface TriggerOutboundInput {
+  /** wacrm account that owns the flow */
+  userId: string;
+  /** Internal contact UUID (must already exist) */
+  contactId: string;
+  /** Internal conversation UUID (must already exist) */
+  conversationId: string;
+  /**
+   * Stable slug matching flows.trigger_config.trigger_key for an
+   * active api_trigger flow owned by userId.
+   */
+  triggerKey: string;
+  /** Vars seeded into the run — available as {{vars.X}} in every node. */
+  initialVars?: Record<string, unknown>;
+}
+
+export interface TriggerOutboundResult {
+  success: boolean;
+  flow_run_id?: string;
+  outcome:
+    | "started"
+    | "completed"
+    | "handed_off"
+    | "skipped_active_run"
+    | "no_matching_flow"
+    | "failed";
+  reason?: string;
+}
+
+export async function triggerOutboundFlow(
+  input: TriggerOutboundInput,
+): Promise<TriggerOutboundResult> {
+  const db = supabaseAdmin();
+  try {
+    // Guard: don't interrupt an existing active run for this contact
+    const existingRun = await loadActiveRunForContact(db, input.userId, input.contactId);
+    if (existingRun) {
+      return {
+        success: false,
+        flow_run_id: existingRun.id,
+        outcome: "skipped_active_run",
+        reason: "Contact already has an active flow run — outbound trigger skipped.",
+      };
+    }
+
+    // Find an active api_trigger flow whose trigger_key matches
+    const { data: flows, error: flowErr } = await db
+      .from("flows")
+      .select("*")
+      .eq("user_id", input.userId)
+      .eq("status", "active")
+      .eq("trigger_type", "api_trigger");
+
+    if (flowErr) throw flowErr;
+
+    const flow = (flows as FlowRow[] ?? []).find(
+      (f) => (f.trigger_config as unknown as ApiTriggerConfig)?.trigger_key === input.triggerKey,
+    );
+
+    if (!flow || !flow.entry_node_id) {
+      return {
+        success: false,
+        outcome: "no_matching_flow",
+        reason: `No active api_trigger flow found with trigger_key "${input.triggerKey}"`,
+      };
+    }
+
+    const nodes = await loadAllNodes(db, flow.id);
+
+    // Insert the run — seeding provided vars + reserved _outbound flag
+    const seedVars: Record<string, unknown> = {
+      _outbound: "true",
+      _trigger_key: input.triggerKey,
+      ...(input.initialVars ?? {}),
+    };
+
+    const { data: inserted, error: insErr } = await db
+      .from("flow_runs")
+      .insert({
+        flow_id: flow.id,
+        user_id: flow.user_id,
+        contact_id: input.contactId,
+        conversation_id: input.conversationId,
+        status: "active",
+        current_node_key: flow.entry_node_id,
+        vars: seedVars,
+      })
+      .select("*")
+      .maybeSingle();
+
+    if (insErr) {
+      const msg = insErr.message ?? "";
+      if (msg.includes("23505") || msg.includes("duplicate key")) {
+        return { success: false, outcome: "skipped_active_run", reason: "Race condition on run insert." };
+      }
+      throw insErr;
+    }
+
+    const run = inserted as FlowRunRow;
+
+    await logEvent(db, run.id, "started", flow.entry_node_id, {
+      flow_id: flow.id,
+      trigger_type: "api_trigger",
+      trigger_key: input.triggerKey,
+    });
+
+    const { error: incErr } = await db.rpc("increment_flow_execution_count", { p_flow_id: flow.id });
+    if (incErr) console.error("[flows] outbound execution_count rpc error:", incErr.message);
+
+    const outcome = await advanceFromNodeKey(db, run, flow.entry_node_id, nodes);
+    return {
+      success: true,
+      flow_run_id: run.id,
+      outcome: outcome.outcome === "advanced" ? "started" : outcome.outcome,
+    };
+  } catch (err) {
+    console.error("[flows] triggerOutboundFlow threw:", err instanceof Error ? err.message : err);
+    return {
+      success: false,
+      outcome: "failed",
+      reason: err instanceof Error ? err.message : String(err),
+    };
+  }
 }
