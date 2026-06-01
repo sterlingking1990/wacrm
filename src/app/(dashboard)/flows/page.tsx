@@ -90,10 +90,13 @@ export default function FlowsPage() {
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+
+    async function fetchFlows() {
+      if (cancelled) return;
+      setLoading(true);
       try {
         const [flowsRes, tmplRes] = await Promise.all([
-          fetch("/api/flows"),
+          fetch("/api/flows", { cache: "no-store" }),
           fetch("/api/flows/templates"),
         ]);
         if (!flowsRes.ok) {
@@ -117,9 +120,23 @@ export default function FlowsPage() {
       } finally {
         if (!cancelled) setLoading(false);
       }
-    })();
+    }
+
+    fetchFlows();
+
+    // Re-fetch when the page is restored from the browser's back-forward
+    // cache (bfcache). Without this, navigating editor → list via the
+    // browser back button thaws a frozen React tree and never re-runs the
+    // effect above — the user sees the stale list from before they created
+    // the flow.
+    function onPageShow(e: PageTransitionEvent) {
+      if (e.persisted) fetchFlows();
+    }
+    window.addEventListener("pageshow", onPageShow);
+
     return () => {
       cancelled = true;
+      window.removeEventListener("pageshow", onPageShow);
     };
   }, []);
 

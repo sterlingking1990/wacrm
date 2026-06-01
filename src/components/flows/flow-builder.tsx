@@ -672,7 +672,7 @@ export function FlowBuilder({ initialFlow, initialNodes }: FlowBuilderProps) {
         onStatus={handleStatus}
         onDelete={handleDelete}
         canActivate={canActivate}
-        onBack={() => router.push("/flows")}
+        onBack={() => { router.refresh(); router.push("/flows"); }}
         onViewRuns={() => router.push(`/flows/${initialFlow.id}/runs`)}
         onToggleAi={() => setAiOpen((v) => !v)}
         aiOpen={aiOpen}
