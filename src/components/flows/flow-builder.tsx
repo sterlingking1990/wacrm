@@ -25,6 +25,7 @@ import {
   Loader2,
   Plus,
   Save,
+  Sparkles,
   Trash2,
   Workflow,
   ChevronDown,
@@ -68,6 +69,7 @@ import {
   type ValidationIssue,
 } from "@/lib/flows/validate";
 import type { FlowNodeRow, FlowRow } from "@/lib/flows/types";
+import { FlowAiPanel } from "@/components/flows/flow-ai-panel";
 
 interface FlowBuilderProps {
   initialFlow: FlowRow;
@@ -384,6 +386,39 @@ export function FlowBuilder({ initialFlow, initialNodes }: FlowBuilderProps) {
     setState(updaterOrValue);
   }, []);
 
+  const [aiOpen, setAiOpen] = useState(false);
+
+  const applyAiPatch = useCallback(
+    (patch: Record<string, unknown>) => {
+      setStateDirty((s) => {
+        const next = { ...s };
+        if (typeof patch.name === "string") next.name = patch.name;
+        if (
+          typeof patch.trigger_type === "string" &&
+          ["keyword", "first_inbound_message", "manual", "api_trigger"].includes(
+            patch.trigger_type,
+          )
+        )
+          next.trigger_type = patch.trigger_type as BuilderState["trigger_type"];
+        if (patch.trigger_config && typeof patch.trigger_config === "object")
+          next.trigger_config = patch.trigger_config as Record<string, unknown>;
+        if (patch.entry_node_id !== undefined)
+          next.entry_node_id =
+            typeof patch.entry_node_id === "string"
+              ? patch.entry_node_id
+              : null;
+        if (Array.isArray(patch.nodes)) {
+          next.nodes = patch.nodes as BuilderNode[];
+          setExpanded(
+            new Set((patch.nodes as BuilderNode[]).map((n) => n.node_key)),
+          );
+        }
+        return next;
+      });
+    },
+    [setStateDirty],
+  );
+
   // Used by jumpToNode() to scroll the target into view + flash its border.
   const nodeRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const [flashedKey, setFlashedKey] = useState<string | null>(null);
@@ -618,6 +653,14 @@ export function FlowBuilder({ initialFlow, initialNodes }: FlowBuilderProps) {
 
   // ---- Render ----
   return (
+    <>
+    <FlowAiPanel
+      flowId={initialFlow.id}
+      open={aiOpen}
+      onClose={() => setAiOpen(false)}
+      state={state}
+      onApplyPatch={applyAiPatch}
+    />
     <div className="mx-auto flex h-full max-w-4xl flex-col gap-6 p-6">
       <Header
         state={state}
@@ -631,6 +674,8 @@ export function FlowBuilder({ initialFlow, initialNodes }: FlowBuilderProps) {
         canActivate={canActivate}
         onBack={() => router.push("/flows")}
         onViewRuns={() => router.push(`/flows/${initialFlow.id}/runs`)}
+        onToggleAi={() => setAiOpen((v) => !v)}
+        aiOpen={aiOpen}
       />
 
       <TriggerPanel
@@ -689,6 +734,7 @@ export function FlowBuilder({ initialFlow, initialNodes }: FlowBuilderProps) {
         <ValidationPanel issues={issues} onJump={jumpToNode} />
       </div>
     </div>
+    </>
   );
 }
 
@@ -708,6 +754,8 @@ function Header({
   canActivate,
   onBack,
   onViewRuns,
+  onToggleAi,
+  aiOpen,
 }: {
   state: BuilderState;
   setState: React.Dispatch<React.SetStateAction<BuilderState>>;
@@ -720,6 +768,8 @@ function Header({
   canActivate: boolean;
   onBack: () => void;
   onViewRuns: () => void;
+  onToggleAi: () => void;
+  aiOpen: boolean;
 }) {
   return (
     <div className="flex flex-col gap-3">
@@ -808,6 +858,15 @@ function Header({
               Activate
             </Button>
           )}
+          <Button
+            variant={aiOpen ? "default" : "outline"}
+            size="sm"
+            onClick={onToggleAi}
+            title="AI flow assistant"
+          >
+            <Sparkles className="h-3.5 w-3.5" />
+            AI
+          </Button>
           <Button onClick={onSave} disabled={saving} size="sm">
             {saving ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
