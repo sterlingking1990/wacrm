@@ -442,6 +442,18 @@ async function executeHandoff(
       .update(convUpdate)
       .eq("id", run.conversation_id);
   }
+
+  // Write the note to contact_notes so it surfaces in the inbox sidebar
+  // for the agent who picks up the conversation.
+  if (cfg.note && run.contact_id) {
+    const noteText = `🤖 Flow handoff: ${interpolateVars(cfg.note, run.vars)}`;
+    await db.from("contact_notes").insert({
+      contact_id: run.contact_id,
+      user_id: run.user_id,
+      note_text: noteText,
+    });
+  }
+
   await logEvent(db, run.id, "handoff", node.node_key, {
     note: cfg.note ?? null,
     assigned_to: cfg.assign_to ?? null,

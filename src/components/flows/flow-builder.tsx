@@ -973,6 +973,55 @@ function StatusBadge({ status }: { status: BuilderState["status"] }) {
 }
 
 // ============================================================
+// Keyword input — splits only on blur so commas aren't eaten
+// while the user is still typing.
+// ============================================================
+
+function KeywordInput({
+  keywords,
+  onChange,
+}: {
+  keywords: string[];
+  onChange: (keywords: string[]) => void;
+}) {
+  const [raw, setRaw] = useState(keywords.join(", "));
+
+  // Keep raw in sync when the parent resets keywords (e.g. switching
+  // trigger type away and back).
+  useEffect(() => {
+    setRaw(keywords.join(", "));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keywords.length === 0 ? 0 : null]);
+
+  function commit(value: string) {
+    const parsed = value
+      .split(",")
+      .map((k) => k.trim())
+      .filter(Boolean);
+    onChange(parsed);
+    setRaw(parsed.join(", "));
+  }
+
+  return (
+    <div>
+      <label className="mb-1 block text-xs text-slate-400">
+        Keywords (comma-separated)
+      </label>
+      <Input
+        value={raw}
+        onChange={(e) => setRaw(e.target.value)}
+        onBlur={(e) => commit(e.target.value)}
+        placeholder="subscribe, buy, dstv, data, mtn"
+        className="bg-slate-800"
+      />
+      <p className="mt-1 text-[10px] text-slate-500">
+        Type keywords separated by commas, then click away to save.
+      </p>
+    </div>
+  );
+}
+
+// ============================================================
 // Trigger panel
 // ============================================================
 
@@ -1019,32 +1068,19 @@ function TriggerPanel({
           </Select>
         </div>
         {state.trigger_type === "keyword" && (
-          <div>
-            <label className="mb-1 block text-xs text-slate-400">
-              Keywords (comma-separated)
-            </label>
-            <Input
-              value={
-                Array.isArray(state.trigger_config.keywords)
-                  ? (state.trigger_config.keywords as string[]).join(", ")
-                  : ""
-              }
-              onChange={(e) =>
-                setState((s) => ({
-                  ...s,
-                  trigger_config: {
-                    ...s.trigger_config,
-                    keywords: e.target.value
-                      .split(",")
-                      .map((k) => k.trim())
-                      .filter(Boolean),
-                  },
-                }))
-              }
-              placeholder="support, help, hi"
-              className="bg-slate-800"
-            />
-          </div>
+          <KeywordInput
+            keywords={
+              Array.isArray(state.trigger_config.keywords)
+                ? (state.trigger_config.keywords as string[])
+                : []
+            }
+            onChange={(keywords) =>
+              setState((s) => ({
+                ...s,
+                trigger_config: { ...s.trigger_config, keywords },
+              }))
+            }
+          />
         )}
       </div>
       {triggerIssues.length > 0 && (
