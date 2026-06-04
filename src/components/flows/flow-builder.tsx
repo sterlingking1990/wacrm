@@ -42,6 +42,7 @@ import {
   GitFork,
   Tag,
   Globe,
+  Upload,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -387,6 +388,22 @@ export function FlowBuilder({ initialFlow, initialNodes }: FlowBuilderProps) {
   }, []);
 
   const [aiOpen, setAiOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importError, setImportError] = useState<string | null>(null);
+
+  function handleImport() {
+    setImportError(null);
+    try {
+      const parsed = JSON.parse(importText) as Record<string, unknown>;
+      applyAiPatch(parsed);
+      setImportOpen(false);
+      setImportText("");
+      toast.success("Flow imported — review nodes then save.");
+    } catch {
+      setImportError("Invalid JSON. Fix the syntax and try again.");
+    }
+  }
 
   const applyAiPatch = useCallback(
     (patch: Record<string, unknown>) => {
@@ -663,6 +680,45 @@ export function FlowBuilder({ initialFlow, initialNodes }: FlowBuilderProps) {
       state={state}
       onApplyPatch={applyAiPatch}
     />
+
+    {/* JSON import modal */}
+    {importOpen && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+        <div className="flex w-full max-w-xl flex-col gap-4 rounded-xl border border-slate-700 bg-slate-900 p-5 shadow-2xl">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-white">Import flow JSON</h2>
+            <button
+              type="button"
+              onClick={() => { setImportOpen(false); setImportText(""); setImportError(null); }}
+              className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-200"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <p className="text-xs text-slate-400">
+            Paste a flow JSON object (same shape the AI generates). Nodes will replace the current node list — save after reviewing.
+          </p>
+          <Textarea
+            value={importText}
+            onChange={(e) => setImportText(e.target.value)}
+            placeholder={'{\n  "name": "My flow",\n  "nodes": [...]\n}'}
+            className="h-56 resize-none bg-slate-800 font-mono text-xs"
+          />
+          {importError && (
+            <p className="text-xs text-red-400">{importError}</p>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" size="sm" onClick={() => { setImportOpen(false); setImportText(""); setImportError(null); }}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={handleImport} disabled={!importText.trim()}>
+              Apply
+            </Button>
+          </div>
+        </div>
+      </div>
+    )}
+
     <div className="mx-auto flex h-full max-w-4xl flex-col gap-6 p-6">
       <Header
         state={state}
@@ -678,6 +734,7 @@ export function FlowBuilder({ initialFlow, initialNodes }: FlowBuilderProps) {
         onViewRuns={() => router.push(`/flows/${initialFlow.id}/runs`)}
         onToggleAi={() => setAiOpen((v) => !v)}
         aiOpen={aiOpen}
+        onImport={() => setImportOpen(true)}
       />
 
       <TriggerPanel
@@ -758,6 +815,7 @@ function Header({
   onViewRuns,
   onToggleAi,
   aiOpen,
+  onImport,
 }: {
   state: BuilderState;
   setState: React.Dispatch<React.SetStateAction<BuilderState>>;
@@ -772,6 +830,7 @@ function Header({
   onViewRuns: () => void;
   onToggleAi: () => void;
   aiOpen: boolean;
+  onImport: () => void;
 }) {
   return (
     <div className="flex flex-col gap-3">
@@ -860,6 +919,15 @@ function Header({
               Activate
             </Button>
           )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onImport}
+            title="Import flow from JSON"
+          >
+            <Upload className="h-3.5 w-3.5" />
+            Import
+          </Button>
           <Button
             variant={aiOpen ? "default" : "outline"}
             size="sm"
