@@ -408,10 +408,12 @@ export function FlowBuilder({ initialFlow, initialNodes }: FlowBuilderProps) {
               ? patch.entry_node_id
               : null;
         if (Array.isArray(patch.nodes)) {
-          next.nodes = patch.nodes as BuilderNode[];
-          setExpanded(
-            new Set((patch.nodes as BuilderNode[]).map((n) => n.node_key)),
-          );
+          const validTypes = new Set(Object.keys(NODE_META));
+          const validNodes = (patch.nodes as BuilderNode[])
+            .filter((n) => validTypes.has(n.node_type))
+            .map((n) => ({ ...n, config: n.config ?? {} }));
+          next.nodes = validNodes;
+          setExpanded(new Set(validNodes.map((n) => n.node_key)));
         }
         return next;
       });
@@ -1156,6 +1158,7 @@ function NodeConfigForm({
   onUpdate: (patch: Partial<BuilderNode>) => void;
   onUpdateConfig: (patch: Record<string, unknown>) => void;
 }) {
+  if (!node.config) return null;
   const cfg = node.config;
   // Internal identifiers (node_key, reply_id columns on buttons/list rows)
   // are auto-generated and the runner is the only consumer. Hide them by
@@ -2069,13 +2072,13 @@ function NodeKeySelect({
       <SelectContent>
         <SelectItem value="__none__">— None —</SelectItem>
         {options.map((n) => {
-          const Icon = NODE_META[n.node_type].icon;
+          const meta = NODE_META[n.node_type];
+          if (!meta) return null;
+          const Icon = meta.icon;
           return (
             <SelectItem key={n.node_key} value={n.node_key}>
               <span className="inline-flex items-center gap-1.5">
-                <Icon
-                  className={cn("h-3 w-3", NODE_META[n.node_type].color)}
-                />
+                <Icon className={cn("h-3 w-3", meta.color)} />
                 {n.node_key}
               </span>
             </SelectItem>

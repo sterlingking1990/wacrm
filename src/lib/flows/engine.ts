@@ -1196,15 +1196,13 @@ export async function triggerOutboundFlow(
 ): Promise<TriggerOutboundResult> {
   const db = supabaseAdmin();
   try {
-    // Guard: don't interrupt an existing active run for this contact
+    // If there's an active inbound run, close it so the outbound trigger
+    // (e.g. payment confirmed) can start immediately. The inbound flow is
+    // already moot at this point — the customer completed the action that
+    // triggered this call.
     const existingRun = await loadActiveRunForContact(db, input.userId, input.contactId);
     if (existingRun) {
-      return {
-        success: false,
-        flow_run_id: existingRun.id,
-        outcome: "skipped_active_run",
-        reason: "Contact already has an active flow run — outbound trigger skipped.",
-      };
+      await endRun(db, existingRun.id, "completed", "superseded_by_outbound_trigger");
     }
 
     // Find an active api_trigger flow whose trigger_key matches

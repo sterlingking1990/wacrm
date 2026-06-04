@@ -188,6 +188,16 @@ function validateNode(
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
+  if (!node.config) {
+    issues.push({
+      severity: "error",
+      scope: "node",
+      node_key: node.node_key,
+      message: `Node "${node.node_key}" is missing its configuration.`,
+    });
+    return issues;
+  }
+
   switch (node.node_type) {
     case "start": {
       const cfg = node.config as { next_node_key?: string };
@@ -732,6 +742,7 @@ export function reachableFromEntry(
 }
 
 function outgoingEdges(node: NodeInput): string[] {
+  if (!node.config) return [];
   switch (node.node_type) {
     case "start":
     case "send_message":
