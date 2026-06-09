@@ -737,6 +737,8 @@ export function FlowBuilder({ initialFlow, initialNodes }: FlowBuilderProps) {
         onImport={() => setImportOpen(true)}
       />
 
+      <ValidationPanel issues={issues} onJump={jumpToNode} />
+
       <TriggerPanel
         state={state}
         setState={setStateDirty}
@@ -760,38 +762,35 @@ export function FlowBuilder({ initialFlow, initialNodes }: FlowBuilderProps) {
             shape from the brief.
           </div>
         ) : (
-          state.nodes.map((node) => (
-            <NodeCard
-              key={node.node_key}
-              node={node}
-              allNodes={state.nodes}
-              expanded={expanded.has(node.node_key)}
-              isEntry={state.entry_node_id === node.node_key}
-              isFlashed={flashedKey === node.node_key}
-              cardRef={setNodeRef(node.node_key)}
-              issues={issues.filter(
-                (i) => i.scope === "node" && i.node_key === node.node_key,
-              )}
-              onToggle={() => toggleExpanded(node.node_key)}
-              onUpdate={(patch) => updateNode(node.node_key, patch)}
-              onUpdateConfig={(patch) => updateNodeConfig(node.node_key, patch)}
-              onRemove={() => removeNode(node.node_key)}
-              onSetEntry={() =>
-                setStateDirty((s) => ({ ...s, entry_node_id: node.node_key }))
-              }
-            />
-          ))
+          <>
+            {state.nodes.map((node) => (
+              <NodeCard
+                key={node.node_key}
+                node={node}
+                allNodes={state.nodes}
+                expanded={expanded.has(node.node_key)}
+                isEntry={state.entry_node_id === node.node_key}
+                isFlashed={flashedKey === node.node_key}
+                cardRef={setNodeRef(node.node_key)}
+                issues={issues.filter(
+                  (i) => i.scope === "node" && i.node_key === node.node_key,
+                )}
+                onToggle={() => toggleExpanded(node.node_key)}
+                onUpdate={(patch) => updateNode(node.node_key, patch)}
+                onUpdateConfig={(patch) => updateNodeConfig(node.node_key, patch)}
+                onRemove={() => removeNode(node.node_key)}
+                onSetEntry={() =>
+                  setStateDirty((s) => ({ ...s, entry_node_id: node.node_key }))
+                }
+              />
+            ))}
+            <div className="flex justify-center pt-1">
+              <AddNodeButton onAdd={addNode} />
+            </div>
+          </>
         )}
       </section>
 
-      {/* Sticky-bottom so the activate-readiness status follows the
-          user as they scroll through nodes. The parent <main> in the
-          dashboard shell is the scroll container; this stays pinned
-          to the viewport bottom (with a 1rem gap) until the page
-          naturally ends, at which point it falls back into flow. */}
-      <div className="sticky bottom-4 z-10 shadow-xl shadow-slate-950/60">
-        <ValidationPanel issues={issues} onJump={jumpToNode} />
-      </div>
     </div>
     </>
   );
@@ -1264,12 +1263,13 @@ function NodeConfigForm({
 }) {
   if (!node.config) return null;
   const cfg = node.config;
-  // Internal identifiers (node_key, reply_id columns on buttons/list rows)
-  // are auto-generated and the runner is the only consumer. Hide them by
-  // default so the form reads as plain editing; expose under "Advanced"
-  // for the rare case where someone wants to lock a key for stable
-  // analytics or external integration.
   const [showAdvanced, setShowAdvanced] = useState(false);
+  // Local draft so the node_key input doesn't commit on every keystroke.
+  // Committing on every keystroke changes node.node_key, which is the React
+  // key on NodeCard — causing the card to unmount/remount and collapsing the
+  // advanced section on every character typed.
+  const [nodeKeyDraft, setNodeKeyDraft] = useState(node.node_key);
+  useEffect(() => { setNodeKeyDraft(node.node_key); }, [node.node_key]);
   const hasReplyIds =
     node.node_type === "send_buttons" || node.node_type === "send_list";
   return (
@@ -1426,8 +1426,9 @@ function NodeConfigForm({
                 Node key (internal identifier — keep stable for analytics)
               </label>
               <Input
-                value={node.node_key}
-                onChange={(e) =>
+                value={nodeKeyDraft}
+                onChange={(e) => setNodeKeyDraft(e.target.value)}
+                onBlur={(e) =>
                   onUpdate({ node_key: slugify(e.target.value, node.node_key) })
                 }
                 className="bg-slate-800 font-mono text-xs"
@@ -2492,7 +2493,7 @@ function AddNodeButton({ onAdd }: { onAdd: (type: NodeType) => void }) {
 }
 
 // ============================================================
-// Validation panel — bottom of the editor
+// Validation panel — below the header
 // ============================================================
 
 function ValidationPanel({
@@ -2503,13 +2504,10 @@ function ValidationPanel({
   onJump: (key: string) => void;
 }) {
   if (issues.length === 0) {
-    // Slate-950 base + emerald accents so the panel stays readable when
-    // sticky-positioned over scrolled-behind node cards (a translucent
-    // bg-emerald-500/10 would bleed through ugly).
     return (
-      <div className="flex items-center gap-2 rounded-lg border border-emerald-600/50 bg-slate-950 p-3 text-sm font-medium text-emerald-300">
-        <CircleCheck className="h-4 w-4 shrink-0" />
-        No issues. Ready to activate.
+      <div className="flex items-center gap-2 px-1 text-xs font-medium text-emerald-400">
+        <CircleCheck className="h-3.5 w-3.5 shrink-0" />
+        No issues — ready to activate
       </div>
     );
   }
