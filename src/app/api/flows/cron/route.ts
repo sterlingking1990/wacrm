@@ -2,6 +2,7 @@ import { timingSafeEqual } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
 import { resolveFallbackPolicy } from '@/lib/flows/fallback'
+import { engineSendText } from '@/lib/flows/meta-send'
 
 /**
  * Sweep abandoned active flow runs.
@@ -54,7 +55,7 @@ export async function GET(request: Request) {
   const { data: runs, error } = await admin
     .from('flow_runs')
     .select(
-      'id, flow_id, user_id, contact_id, last_advanced_at, flows ( fallback_policy )',
+      'id, flow_id, user_id, contact_id, conversation_id, last_advanced_at, flows ( fallback_policy )',
     )
     .eq('status', 'active')
 
@@ -69,6 +70,7 @@ export async function GET(request: Request) {
     flow_id: string
     user_id: string
     contact_id: string | null
+    conversation_id: string | null
     last_advanced_at: string
     flows: { fallback_policy: unknown } | { fallback_policy: unknown }[] | null
   }
@@ -105,6 +107,21 @@ export async function GET(request: Request) {
         },
       })
       swept += 1
+
+      // Notify the contact so they know the session ended and can restart
+      if (r.contact_id && r.conversation_id) {
+        try {
+          await engineSendText({
+            userId:         r.user_id,
+            conversationId: r.conversation_id,
+            contactId:      r.contact_id,
+            text: "⏱️ Your session timed out due to inactivity. Send a message to start again 👋",
+          })
+        } catch (e) {
+          // Non-fatal — sweep still counts as successful
+          console.warn('[flows-cron] timeout notify failed for run', r.id, String(e))
+        }
+      }
     }
   }
 

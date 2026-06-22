@@ -44,6 +44,7 @@ import {
   Globe,
   Upload,
   X,
+  Settings2,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -69,7 +70,8 @@ import {
   validateFlowForActivation,
   type ValidationIssue,
 } from "@/lib/flows/validate";
-import type { FlowNodeRow, FlowRow } from "@/lib/flows/types";
+import type { FlowNodeRow, FlowRow, FlowFallbackPolicy } from "@/lib/flows/types";
+import { DEFAULT_FALLBACK_POLICY } from "@/lib/flows/types";
 import { FlowAiPanel } from "@/components/flows/flow-ai-panel";
 
 interface FlowBuilderProps {
@@ -109,6 +111,7 @@ interface BuilderState {
   entry_node_id: string | null;
   status: FlowRow["status"];
   nodes: BuilderNode[];
+  fallback_policy: FlowFallbackPolicy;
 }
 
 // ============================================================
@@ -167,6 +170,12 @@ const NODE_META: Record<
 // ============================================================
 // Helpers
 // ============================================================
+
+function fmtTimeout(hours: number): string {
+  if (hours < 1) return `${Math.round(hours * 60)} min`;
+  if (hours % 24 === 0) return `${hours / 24}d`;
+  return `${hours}h`;
+}
 
 function slugify(s: string, fallback: string): string {
   const cleaned = s
@@ -370,6 +379,7 @@ export function FlowBuilder({ initialFlow, initialNodes }: FlowBuilderProps) {
       node_type: n.node_type as NodeType,
       config: n.config as Record<string, unknown>,
     })),
+    fallback_policy: initialFlow.fallback_policy ?? DEFAULT_FALLBACK_POLICY,
   }));
 
   const [saving, setSaving] = useState(false);
@@ -490,6 +500,7 @@ export function FlowBuilder({ initialFlow, initialNodes }: FlowBuilderProps) {
           trigger_config: state.trigger_config,
           entry_node_id: state.entry_node_id,
           nodes: state.nodes,
+          fallback_policy: state.fallback_policy,
         }),
       });
       if (!res.ok) {
@@ -744,6 +755,8 @@ export function FlowBuilder({ initialFlow, initialNodes }: FlowBuilderProps) {
         setState={setStateDirty}
         triggerIssues={issues.filter((i) => i.scope === "trigger")}
       />
+
+      <SettingsPanel state={state} setState={setStateDirty} />
 
       <EntryPicker state={state} setState={setStateDirty} />
 
@@ -1087,6 +1100,177 @@ function TriggerPanel({
           {triggerIssues.map((i, ix) => (
             <IssueLine key={ix} issue={i} />
           ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ============================================================
+// Flow settings panel — fallback policy (timeout, unknown reply)
+// ============================================================
+
+function SettingsPanel({
+  state,
+  setState,
+}: {
+  state: BuilderState;
+  setState: React.Dispatch<React.SetStateAction<BuilderState>>;
+}) {
+  const [open, setOpen] = useState(false);
+  const p = state.fallback_policy;
+
+  // Local display state for timeout — stored as hours internally
+  const [timeoutUnit, setTimeoutUnit] = useState<"minutes" | "hours" | "days">(() => {
+    if (p.on_timeout_hours < 1) return "minutes";
+    if (p.on_timeout_hours % 24 === 0) return "days";
+    return "hours";
+  });
+  const [timeoutValue, setTimeoutValue] = useState<number>(() => {
+    if (p.on_timeout_hours < 1) return Math.round(p.on_timeout_hours * 60);
+    if (p.on_timeout_hours % 24 === 0) return p.on_timeout_hours / 24;
+    return p.on_timeout_hours;
+  });
+
+  function toHours(value: number, unit: "minutes" | "hours" | "days"): number {
+    if (unit === "minutes") return value / 60;
+    if (unit === "days") return value * 24;
+    return value;
+  }
+
+  function patchPolicy(patch: Partial<FlowFallbackPolicy>) {
+    setState((s) => ({ ...s, fallback_policy: { ...s.fallback_policy, ...patch } }));
+  }
+
+  return (
+    <section className="rounded-lg border border-slate-800 bg-slate-900">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between p-4 text-left"
+      >
+        <div className="flex items-center gap-2">
+          <Settings2 className="h-4 w-4 text-slate-400" />
+          <h2 className="text-sm font-semibold text-white">Flow settings</h2>
+          {!open && (
+            <span className="text-xs text-slate-500">
+              Timeout: {fmtTimeout(p.on_timeout_hours)} · Unknown reply: {p.on_unknown_reply}
+            </span>
+          )}
+        </div>
+        {open ? (
+          <ChevronUp className="h-4 w-4 text-slate-400" />
+        ) : (
+          <ChevronDown className="h-4 w-4 text-slate-400" />
+        )}
+      </button>
+
+      {open && (
+        <div className="border-t border-slate-800 p-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-xs text-slate-400">
+                Abandon timeout
+              </label>
+              <div className="flex gap-2">
+                <Input
+                  type="number"
+                  min={1}
+                  value={timeoutValue}
+                  onChange={(e) => {
+                    const v = parseFloat(e.target.value);
+                    if (v > 0) {
+                      setTimeoutValue(v);
+                      patchPolicy({ on_timeout_hours: toHours(v, timeoutUnit) });
+                    }
+                  }}
+                  className="bg-slate-800"
+                />
+                <Select
+                  value={timeoutUnit}
+                  onValueChange={(u) => {
+                    const unit = u as "minutes" | "hours" | "days";
+                    setTimeoutUnit(unit);
+                    patchPolicy({ on_timeout_hours: toHours(timeoutValue, unit) });
+                  }}
+                >
+                  <SelectTrigger className="w-32 bg-slate-800">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="minutes">Minutes</SelectItem>
+                    <SelectItem value="hours">Hours</SelectItem>
+                    <SelectItem value="days">Days</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <p className="mt-1 text-[11px] text-slate-500">
+                Runs inactive for this long are swept as timed-out, freeing the customer to start a new flow.
+              </p>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs text-slate-400">
+                When reply doesn&apos;t match a button
+              </label>
+              <Select
+                value={p.on_unknown_reply}
+                onValueChange={(v) =>
+                  patchPolicy({ on_unknown_reply: v as FlowFallbackPolicy["on_unknown_reply"] })
+                }
+              >
+                <SelectTrigger className="bg-slate-800">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="reprompt">Re-send the prompt</SelectItem>
+                  <SelectItem value="handoff">Hand off to agent</SelectItem>
+                  <SelectItem value="ignore">Ignore (keep waiting)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {p.on_unknown_reply === "reprompt" && (
+              <>
+                <div>
+                  <label className="mb-1 block text-xs text-slate-400">
+                    Max re-prompts
+                  </label>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={10}
+                    value={p.max_reprompts}
+                    onChange={(e) => {
+                      const v = parseInt(e.target.value, 10);
+                      if (!isNaN(v) && v >= 0) patchPolicy({ max_reprompts: v });
+                    }}
+                    className="bg-slate-800"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs text-slate-400">
+                    After max re-prompts
+                  </label>
+                  <Select
+                    value={p.on_exhaust}
+                    onValueChange={(v) =>
+                      patchPolicy({ on_exhaust: v as FlowFallbackPolicy["on_exhaust"] })
+                    }
+                  >
+                    <SelectTrigger className="bg-slate-800">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="handoff">Hand off to agent</SelectItem>
+                      <SelectItem value="end">End the flow</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       )}
     </section>
