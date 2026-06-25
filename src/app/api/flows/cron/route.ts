@@ -115,7 +115,7 @@ export async function GET(request: Request) {
             userId:         r.user_id,
             conversationId: r.conversation_id,
             contactId:      r.contact_id,
-            text: "⏱️ Your session timed out due to inactivity. Send a message to start again 👋",
+            text: "⏱️ Your session timed out due to inactivity. Send Hi to start again 👋",
           })
         } catch (e) {
           // Non-fatal — sweep still counts as successful

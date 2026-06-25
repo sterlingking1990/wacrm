@@ -13,6 +13,8 @@ import {
   ArrowRight,
   ArrowLeft,
   X,
+  ShoppingBag,
+  CheckCircle2,
 } from 'lucide-react';
 
 type AudienceType = 'all' | 'tags' | 'custom_field' | 'csv';
@@ -89,6 +91,25 @@ export function Step2SelectAudience({
   const [loadingFields, setLoadingFields] = useState(false);
   const [estimatedCount, setEstimatedCount] = useState<number | null>(null);
   const [loadingCount, setLoadingCount] = useState(false);
+  const [importingBrandible, setImportingBrandible] = useState(false);
+  const [brandibleImportCount, setBrandibleImportCount] = useState<number | null>(null);
+  const [brandibleImportError, setBrandibleImportError] = useState<string | null>(null);
+
+  async function importBrandibleBuyers() {
+    setImportingBrandible(true);
+    setBrandibleImportError(null);
+    try {
+      const res = await fetch('/api/brandible/buyers');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? 'Import failed');
+      onUpdate({ ...audience, type: 'csv', csvContacts: data.contacts });
+      setBrandibleImportCount(data.count);
+    } catch (err) {
+      setBrandibleImportError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setImportingBrandible(false);
+    }
+  }
 
   // Tags are used both by the primary "Filter by Tags" audience type
   // AND by the exclude-list below — so always load once on mount.
@@ -301,6 +322,50 @@ export function Step2SelectAudience({
             </button>
           );
         })}
+
+        {/* Brandible Buyers — imports directly from group buy history */}
+        <button
+          onClick={importBrandibleBuyers}
+          disabled={importingBrandible}
+          className={`flex items-start gap-3 rounded-xl border p-4 text-left transition-all ${
+            brandibleImportCount !== null
+              ? 'border-emerald-500/40 bg-emerald-500/5 ring-1 ring-emerald-500/20'
+              : 'border-slate-700 bg-slate-900/50 hover:border-slate-600'
+          } disabled:opacity-60`}
+        >
+          <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
+            brandibleImportCount !== null
+              ? 'bg-emerald-500/10 text-emerald-400'
+              : 'bg-slate-800 text-slate-400'
+          }`}>
+            {importingBrandible
+              ? <Loader2 className="h-4 w-4 animate-spin" />
+              : brandibleImportCount !== null
+              ? <CheckCircle2 className="h-4 w-4" />
+              : <ShoppingBag className="h-4 w-4" />
+            }
+          </div>
+          <div>
+            <p className="text-sm font-medium text-white">
+              Brandible Buyers
+              {brandibleImportCount !== null && (
+                <span className="ml-2 text-xs font-normal text-emerald-400">
+                  {brandibleImportCount.toLocaleString()} imported
+                </span>
+              )}
+            </p>
+            <p className="mt-0.5 text-xs text-slate-400">
+              {importingBrandible
+                ? 'Fetching from Brandible…'
+                : brandibleImportCount !== null
+                ? 'Click to refresh the list'
+                : 'Import all customers from group buy history'}
+            </p>
+            {brandibleImportError && (
+              <p className="mt-1 text-xs text-red-400">{brandibleImportError}</p>
+            )}
+          </div>
+        </button>
       </div>
 
       {audience.type === 'tags' && (
