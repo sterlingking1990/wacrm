@@ -327,6 +327,8 @@ async function findEntryFlow(
   if (error || !flows) return null;
 
   const typed = flows as FlowRow[];
+  let catchAllFlow: FlowRow | null = null;
+
   for (const flow of typed) {
     if (flow.trigger_type === "keyword") {
       if (matchesKeywordTrigger(
@@ -337,10 +339,12 @@ async function findEntryFlow(
       }
     } else if (flow.trigger_type === "first_inbound_message" && isFirstInbound) {
       return flow;
+    } else if (flow.trigger_type === "catch_all") {
+      catchAllFlow = flow; // only fires if nothing else matched
     }
     // 'manual' triggers do not auto-start from inbound messages.
   }
-  return null;
+  return catchAllFlow;
 }
 
 // ============================================================

@@ -226,7 +226,8 @@ export type FlowTriggerConfig =
   | { trigger_type: "keyword"; config: KeywordTriggerConfig }
   | { trigger_type: "first_inbound_message"; config: FirstInboundTriggerConfig }
   | { trigger_type: "manual"; config: Record<string, never> }
-  | { trigger_type: "api_trigger"; config: ApiTriggerConfig };
+  | { trigger_type: "api_trigger"; config: ApiTriggerConfig }
+  | { trigger_type: "catch_all"; config: Record<string, never> };
 
 // ============================================================
 // DB-row shapes (read by the engine via supabaseAdmin)
@@ -238,7 +239,7 @@ export interface FlowRow {
   name: string;
   description: string | null;
   status: "draft" | "active" | "archived";
-  trigger_type: "keyword" | "first_inbound_message" | "manual" | "api_trigger";
+  trigger_type: "keyword" | "first_inbound_message" | "manual" | "api_trigger" | "catch_all";
   trigger_config: KeywordTriggerConfig | FirstInboundTriggerConfig | Record<string, unknown>;
   entry_node_id: string | null;
   fallback_policy: FlowFallbackPolicy;

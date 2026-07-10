@@ -422,7 +422,7 @@ export function FlowBuilder({ initialFlow, initialNodes }: FlowBuilderProps) {
         if (typeof patch.name === "string") next.name = patch.name;
         if (
           typeof patch.trigger_type === "string" &&
-          ["keyword", "first_inbound_message", "manual", "api_trigger"].includes(
+          ["keyword", "first_inbound_message", "manual", "api_trigger", "catch_all"].includes(
             patch.trigger_type,
           )
         )
