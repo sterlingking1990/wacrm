@@ -106,7 +106,7 @@ interface BuilderNode {
 interface BuilderState {
   name: string;
   description: string;
-  trigger_type: "keyword" | "first_inbound_message" | "manual" | "api_trigger";
+  trigger_type: "keyword" | "first_inbound_message" | "manual" | "api_trigger" | "catch_all";
   trigger_config: Record<string, unknown>;
   entry_node_id: string | null;
   status: FlowRow["status"];
@@ -1075,6 +1075,9 @@ function TriggerPanel({
               </SelectItem>
               <SelectItem value="manual">
                 Manual only (no auto-trigger)
+              </SelectItem>
+              <SelectItem value="catch_all">
+                Catch-all (fires when no other flow matches)
               </SelectItem>
             </SelectContent>
           </Select>
